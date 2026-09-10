@@ -335,4 +335,9 @@ export default new OAuthProvider({
 	defaultHandler: SchwabHandler as any, // Cast remains
 	authorizeEndpoint: API_ENDPOINTS.AUTHORIZE,
 	tokenEndpoint: API_ENDPOINTS.TOKEN,
+	// Enables RFC-7591 Dynamic Client Registration so MCP clients (e.g. Claude Desktop)
+	// can register themselves automatically instead of requiring a manually pre-registered
+	// OAuth client ID/secret for this server's own auth layer (separate from the Schwab
+	// SCHWAB_CLIENT_ID/SECRET credentials configured elsewhere).
+	clientRegistrationEndpoint: API_ENDPOINTS.REGISTER,
 })

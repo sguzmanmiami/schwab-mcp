@@ -11,11 +11,39 @@ import {
 	CancelOrderParams,
 	ReplaceOrderParams,
 	GetTransactionsParams,
+	GetTransactionsPathParams,
+	GetTransactionsQueryParams,
 	GetTransactionByIdParams,
 	GetUserPreferenceParams,
 } from '@sudowealth/schwab-api'
+import { z } from 'zod'
 import { logger } from '../../shared/log'
 import { createToolSpec } from '../types'
+
+// --- WORKAROUND for a bug in @sudowealth/schwab-api (v2.1.0 and v2.1.1) ---
+// The library's `Transaction` zod schema marks fields like `user`, `positionId`,
+// `orderId`, and `activityType` as required, but Schwab's real /transactions
+// response omits them for many activity types (dividends, transfers, journal
+// entries, and even plain trades in practice). That makes `responseSchema.safeParse`
+// fail on every call, regardless of date range or symbol filter, and the SDK
+// throws "Invalid response data structure ... Validation errors: ...".
+//
+// Fix: build our own EndpointMetadata that reuses the SAME path/pathSchema/
+// querySchema (so auth, URL-building and query validation are untouched) but
+// swaps the response schema for a permissive one that accepts whatever shape
+// Schwab actually sends. `client.createEndpoint()` is a public, typed escape
+// hatch on SchwabApiClient made exactly for this (see create-api-client.d.ts).
+// Nothing in node_modules is patched, so this survives `npm install`.
+const LenientTransaction = z.record(z.string(), z.unknown())
+const lenientGetTransactionsMeta = {
+	method: 'GET' as const,
+	path: '/trader/v1/accounts/{accountNumber}/transactions',
+	pathSchema: GetTransactionsPathParams,
+	querySchema: GetTransactionsQueryParams,
+	responseSchema: z.array(LenientTransaction),
+	description:
+		'Get transactions for a specific account (lenient parsing workaround).',
+}
 
 export const toolSpecs = [
 	createToolSpec({
@@ -156,19 +184,23 @@ export const toolSpecs = [
 				hasType: !!p.types,
 				symbol: p.symbol,
 			})
+			const getTransactionsLenient = c.createEndpoint<
+				z.infer<typeof GetTransactionsPathParams>,
+				z.infer<typeof GetTransactionsQueryParams>,
+				unknown,
+				Array<Record<string, unknown>>
+			>(lenientGetTransactionsMeta)
 			const transactions: unknown[] = []
 			for (const account of accounts) {
-				const accountTransactions = await c.trader.transactions.getTransactions(
-					{
-						pathParams: { accountNumber: account.hashValue },
-						queryParams: {
-							startDate: p.startDate,
-							endDate: p.endDate,
-							types: p.types,
-							symbol: p.symbol,
-						},
+				const accountTransactions = await getTransactionsLenient({
+					pathParams: { accountNumber: account.hashValue },
+					queryParams: {
+						startDate: p.startDate,
+						endDate: p.endDate,
+						types: p.types,
+						symbol: p.symbol,
 					},
-				)
+				})
 				logger.debug('[getTransactions] Transactions for account', {
 					accountHash: account.hashValue,
 					count: accountTransactions.length,
